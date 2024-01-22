@@ -16,11 +16,14 @@ library(foreach)
 library(dplyr)
 library(readxl)
 library(xlsx)
-library(MASS)
-library(shinybusy)
+library(BiocManager)
+#options(repos = BiocManager::repositories())
 library(genbankr)
 library(htmltools)
 library(DT)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
 
 
 source("global.R")
@@ -28,28 +31,42 @@ source("global.R")
 # Define server logic required to draw a histogram
 function(input, output, session) {
   
-  rv <- reactiveValues(inaccs=list())
+  rv <- reactiveValues(depinaccs=list(),pfinaccs=list())
   
   rv$depth <- reactive({
+    req(rv$project)
     file <- input$uploaddep
     ext <- tools::file_ext(file$datapath)
     
     req(file)
-    validate(need(ext %in% c("depth"), "Please upload a file in the right format"))
+    shiny::validate(need(ext %in% c("depth"), "Please upload a file in the right format"))
     
-    readdepfiles.adj.func(file=file$datapath,acc=input$acc,adjfactor=input$adjfactor)
+    readdepfiles.adj.func(file=file$datapath,acc=rv$project,adjfactor=input$adjfactor)
+    
+  })
+  
+  rv$logic <- reactive({
+    file <- input$uploadlogic
+    ext <- tools::file_ext(file$datapath)
+    
+    req(file)
+    shiny::validate(need(ext %in% c("json"), "Please upload a file in the right format"))
+    
+    jsonlite::fromJSON(jsonlite::read_json(file$datapath)[[1]])
     
   })
   
   
   output$cirfiles <- renderUI({
-    req(input$acc)
-    if(is.null(rv$depth())) {
+    req(rv$project)
+    
+    if(is.null(rv[[rv$project]]$depfile)) {
       mydiv <- div()
     }else{
-      rv[[input$acc]]$chrs <- unique(rv$depth()$chr)
-      # print(rv[[input$acc]]$chrs)
-      mydiv <- div(foreach::foreach(a=rv[[input$acc]]$chrs) %do% do.call("fileInput", list(inputId=paste0("file_",a), 
+      depf <- rv[[rv$project]]$depfile
+      rv[[rv$project]]$chrs <- unique(depf$chr)
+       print(rv[[rv$project]]$chrs)
+      mydiv <- div(foreach::foreach(a=rv[[rv$project]]$chrs) %do% do.call("fileInput", list(inputId=paste0("file_",a), 
                                                                               label=paste0("Plasmid file for ", a,": "), 
                                                                               multiple = FALSE,
                                                                               accept = c(".gb",".gbk"))))
@@ -57,27 +74,42 @@ function(input, output, session) {
     mydiv
   })
   
-  observeEvent(input$uploaddep,{
-    req(input$acc)
-    rv[[input$acc]]$depfile <-  rv$depth()
+  observeEvent(input$acc,{
+    rv$project <-  paste(rv$analysis,input$acc,sep="_")
+    print(rv$project)
   })
   
   observeEvent(input$uploaddep,{
-    req(input$acc)
-    rv$inaccs <-  c(rv$inaccs,list(input$acc))
-    print(rv$inaccs)
-  })
-  
-  observeEvent(input$godepth, {
+    req(rv$project)
+    rv[[rv$project]]$depfile <-  rv$depth()
     
+    print(head(rv$depth()))
+  })
+  
+  observeEvent(input$uploadlogic,{
+    req(rv$project)
+    rv[[rv$project]]$logicfile <-  rv$logic()
+  })
+  
+  observeEvent(input$godepth,{
+    req(rv$project)
+    rv$depinaccs <-  c(rv$depinaccs,list(rv$project))
+    print(rv$depinaccs)
+  })
+  
+  
+  observeEvent(list(input$godepth,input$gopf), {
+    
+    req(rv$project)
+    req(rv[[rv$project]]$chrs)
     cir = list()
     
-    for(nr in 1:length(rv[[input$acc]]$chrs)){
-      file <- input[[paste0("file_",rv[[input$acc]]$chrs[nr])]]
+    for(nr in 1:length(rv[[rv$project]]$chrs)){
+      file <- input[[paste0("file_",rv[[rv$project]]$chrs[nr])]]
       ext <- tools::file_ext(file$datapath)
       
       req(file)
-      validate(need(ext %in% c("gb","gbk"), "Please upload a file in genbank format"))
+      shiny::validate(need(ext %in% c("gb","gbk"), "Please upload a file in genbank format"))
       
       if(ext %in% c("gb","gbk")) {
         gb <- genbankr::readGenBank(file$datapath)
@@ -89,30 +121,68 @@ function(input, output, session) {
       }
     }
     
-    names(cir) <- rv[[input$acc]]$chrs
+    names(cir) <- rv[[rv$project]]$chrs
     
     print(names(cir))
-    rv[[input$acc]]$circuit <- cir
+    rv[[rv$project]]$circuit <- cir
     
   })
   
+  
   observeEvent(input$rnadep,{
     
-    rv$analysis <- "covdep"
+    rv$analysis <- "CovDep"
+    
+    removeModal()
+  })
+  
+  observeEvent(input$rnapf,{
+    
+    rv$analysis <- "RnapFlux"
     
     removeModal()
   })
   
   observeEvent(input$rnade,{
-    rv$analysis <- "deseq"
+    rv$analysis <- "Deseq"
     removeModal()
   })
   
+  observeEvent(input$gopf,{
+    req(rv[[rv$project]]$depfile)
+    rv[[rv$project]]$params <-  c(cpratio = input$cpratio, #adjust plasmid copy number of different backbones
+                                               ratio1 = input$ratio1, #1RPU =0.019 RNAP/s, conversion factor estimated by single-molecule measurement
+                                               convert1 = input$intercept, #intercept of RPU conversion 
+                                               convert2 = input$coefficient, #coefficient of RPU conversion
+                                               gamma = input$gamma #degradation rate
+    )
+    
+    rv[[rv$project]]$rnapflux <- foreach::foreach(a=rv[[rv$project]]$chr,.combine = "rbind") %do% {
+      viztab <- rv[[rv$project]]$depfile
+      viztab <- viztab[viztab$chr == a, ]
+      
+      print(paste(rv$project, a, length(viztab$loc)))
+      newviz <- data.frame(loc=viztab$loc,adjdepth=viztab$adjdepth,chr=a)
+      nummax <- max(newviz$loc)
+      temp <- data.frame(loc=(1:nummax)[!1:nummax %in% viztab$loc],adjdepth=0,chr=a)
+      newviz <- rbind(newviz,temp)
+      newviz <- newviz[order(newviz$loc),]
+      print(paste(rv$project, a, length(newviz$loc)))
+      
+      rnapf <- data.frame(chr=a,loc=newviz$loc,adjdepth=rnap.func(newviz$adjdepth,rv[[rv$project]]$params))
+      return(rnapf)
+    }
+    
+    print(head(rv[[rv$project]]$rnapf))
+    print(tail(rv[[rv$project]]$rnapf))
+    
+  })
+   
   output$sampselect <- renderUI({
-    if(length(rv$inaccs) > 0) {
+    if(length(rv$depinaccs) > 0) {
      
       selectInput("selectsamp","Please select samples for comparison from:",
-                  choices = unlist(rv$inaccs),multiple = T)
+                  choices = unlist(rv$depinaccs),multiple = T)
      
     }else{
       div()
@@ -212,33 +282,32 @@ function(input, output, session) {
   })
   
   
-  
   observeEvent(input$godepth, {
-    id <- paste0("dep",input$acc, input$prepend, "p")
+    id <- paste0("dep",rv$project, input$prepend, "p")
     print(id)
     insertTab(inputId = "main",
               # target = "Wellcome",
-              navbarMenu(paste0("Coverage Depth Analysis for ", input$acc),
+              navbarMenu(paste0("Coverage Depth Analysis for ", rv$project),
                          
                          tabPanel("Circular Coverage Distribution", 
                                   card(card_header("Coverage Plot"),
                                        layout_sidebar(
                                          fillable = TRUE,
-                                         sidebar = sidebar(uiOutput(paste("cirsidebar",input$acc,sep="_")),
-                                                           uiOutput(paste("selectele",input$acc,sep="_")),
-                                                           checkboxInput(paste("outvals",input$acc,sep="_"),"Check to change style")
+                                         sidebar = sidebar(uiOutput(paste("cirsidebar",rv$project,sep="_")),
+                                                           uiOutput(paste("selectele",rv$project,sep="_")),
+                                                           checkboxInput(paste("outvals",rv$project,sep="_"),"Check to change style")
                                          ),
                                          
-                                         plotlyOutput(paste("cirdepplot",input$acc,sep="_"))
+                                         plotlyOutput(paste("cirdepplot",rv$project,sep="_"))
                                        ),
                                        full_screen = T),
                                   layout_column_wrap(
                                     width = 1/2,
                                     card(card_header("Element Distribution"),
-                                         plotlyOutput(paste("cirdist",input$acc,sep="_"))
+                                         plotlyOutput(paste("cirdist",rv$project,sep="_"))
                                     ),
                                     card(card_header("Total Element Distribution"),
-                                         plotlyOutput(paste("boxes",input$acc,sep="_")),
+                                         plotlyOutput(paste("boxes",rv$project,sep="_")),
                                          full_screen = T))
                                   
                          ),
@@ -246,24 +315,25 @@ function(input, output, session) {
                                   card(card_header("Linear Coverage Depth"),
                                        layout_sidebar(
                                          fillable = TRUE,
-                                         sidebar = sidebar(uiOutput(paste("linsidebar",input$acc,sep="_")),
-                                                           uiOutput(paste("linselectele",input$acc,sep="_"))),
-                                         plotlyOutput(paste("lincov",input$acc,sep="_"))
+                                         sidebar = sidebar(uiOutput(paste("linsidebar",rv$project,sep="_")),
+                                                           uiOutput(paste("linselectele",rv$project,sep="_"))),
+                                         plotlyOutput(paste("lincov",rv$project,sep="_"))
                                        ),full_screen = T)
                          ),
                          "------",
                          "Sample Info",
                          paste0("Depth File: ", input$uploaddep$name),
                          paste0("Circuit Files: \n"),
-                         do.call("paste0",foreach::foreach(a=rv[[input$acc]]$chrs) %do% paste0(input[[paste0("file_",a)]]$name, "\n"))
+                         do.call("paste0",foreach::foreach(a=rv[[rv$project]]$chrs) %do% paste0(input[[paste0("file_",a)]]$name, "\n"))
               )
     )
     removeModal()
   })
   
+  
   observe({
   
-  lapply(rv$inaccs, function(x) {
+  lapply(rv$depinaccs, function(x) {
     output[[paste("cirsidebar",x,sep="_")]]  <- renderUI({
       req(rv[[x]]$circuit)
       
@@ -417,6 +487,143 @@ function(input, output, session) {
 
   })
   
+  observeEvent(input$gopf,{
+    req(rv$project)
+    rv$pfinaccs <-  c(rv$pfinaccs,list(rv$project))
+    print(rv$pfinaccs)
+  })
+  observeEvent(input$gopf, {
+    id <- paste0("pf",rv$project, input$prepend, "p")
+    print(id)
+    insertTab(inputId = "main",
+              # target = "Wellcome",
+              navbarMenu(paste0("RNAP Flux Analysis for ", rv$project),
+                         
+                         tabPanel("Logic Flowchart",
+                                  
+                                  layout_column_wrap(
+                                    width = 1/2,
+                                    card(card_header("Logic Chart by GraphViz"),
+                                         grVizOutput(paste("gvgraph",rv$project,sep="_")),
+                                         full_screen = T),
+                                    card(card_header("Sankey Plot of Genetic Circuit Logic"),
+                                         plotlyOutput(paste("logicflow",rv$project,sep="_")),
+                                        # 
+                                         full_screen = T)
+                                        
+                                    ),
+                                  layout_column_wrap(
+                                    width = 1/2,
+                                    card(card_header("Logic Elements on Plasmids"),
+                                           plotlyOutput(paste("rflogic",rv$project,sep="_")),
+                                         full_screen = T),
+                                    card(card_header("RNAP Flux of selected elements"),
+                                         layout_sidebar(
+                                           sidebar = sidebar(
+                                             checkboxInput(paste("cal_flux",rv$project,sep="_"),
+                                                           label = "Check to display RNAP Flux",
+                                                           value = F)
+                                           ),
+                                           fillable = TRUE,
+                                           plotlyOutput(paste("rfele",rv$project,sep="_"))
+                                         ),
+                                         full_screen = T)
+                                  )
+                                  
+                                  
+                         ),
+                         "------",
+                         "Sample Info",
+                         paste0("Depth File: ", input$uploaddep$name),
+                         paste0("Circuit Files: \n"),
+                         do.call("paste0",foreach::foreach(a=rv[[rv$project]]$chrs) %do% paste0(input[[paste0("file_",a)]]$name, "\n"))
+              )
+    )
+    removeModal()
+  })
+  observe({
+    
+    lapply(rv$pfinaccs, function(x) {
+      output[[paste("logicflow",x,sep="_")]] <- renderPlotly({
+        print(rv[[x]]$logicfile)
+       fig <- gcl.sankey(rv[[x]]$logicfile)
+       
+       fig
+      })
+      
+      output[[paste("gvgraph",x,sep="_")]] <- renderGrViz({
+        req(rv[[x]]$logicfile)
+        
+        d <- DiagrammeR::grViz(rv[[x]]$logicfile$Dot_Lang)
+        d
+      })
+      
+      output[[paste("rflogic",x,sep="_")]] <- renderPlotly({
+        req(rv[[x]]$logicfile)
+        req(rv[[x]]$circuit)
+        
+        pllist <- foreach::foreach(a=rv[[x]]$chr) %do% {
+          return(plot.pl.reg(a,rv[[x]]$circuit[[a]],rv[[x]]$logicfile, source=paste("reg_plot",x,a,sep = "_")))
+        }
+        
+       plot <-  subplot(pllist,nrows = length(pllist))
+        
+       plot
+      })
+      
+      
+      output[[paste("rfele",x,sep="_")]] <- renderPlotly({
+        req(rv[[x]]$logicfile)
+        req(rv[[x]]$depfile)
+        req(rv[[x]]$circuit)
+        req(rv[[x]]$chr)
+        
+        clickData <- event_data("plotly_click", source=paste("reg_plot",x,rv[[x]]$chr[[length(rv[[x]]$chr)]],sep = "_"))
+        
+        
+        if (is.null(clickData)) return(NULL)
+        
+        print(clickData)
+        
+        num <-  clickData[["curveNumber"]]
+        print(num)
+        
+        eledf <- foreach::foreach(a=rv[[x]]$chr,.combine = "rbind") %do% {
+          if(length(rv[[x]]$logicfile$GC_Units$items) >0){
+            elelist <- foreach::foreach(b=rv[[x]]$logicfile$GC_Units$items,.combine = "c") %do% b
+            cir <- rv[[x]]$circuit[[a]]
+            newf <- cir[na.omit(match(elelist,cir$label)),]
+            if(length(newf$label)>0) {
+              newf <- newf[newf$type %in% names(ele.func.suite),]
+              newf <- rbind(newf,data.frame(start=0,end=0,strand="line",type="line",label="line"))
+              newf$chr <- a
+              return(newf)
+            }
+            
+          }
+        }
+        
+        print(eledf[num,])
+        plot <- plot_ly()
+        
+        if(clickData[["curveNumber"]] >0) {
+          
+          if(input[[paste("cal_flux",x,sep="_")]] == F) {
+            plot <- plot.with.ele(rv[[x]]$depfile,eledf[num,]$chr,eledf[num,])
+            print("Cov!")
+          }else{
+            plot <- plot.with.ele(rv[[x]]$rnapflux,eledf[num,]$chr,eledf[num,])
+            print("RNAP!")
+          }
+          
+        }
+        
+        plot
+      })
+      
+    })
+  })
+  
   dataModal <- function(failed = FALSE) {
     modalDialog(size="l",title="Genetic Circuit Analysis Options",
                 helpText("Please choose one of the analyses below:"
@@ -430,6 +637,12 @@ function(input, output, session) {
                     #  textInput("depname","Plsease enter the name of analysis"),
                     actionBttn("rnadep","GO",color = "success"),
                     showcase = bsicons::bs_icon("bar-chart-steps")
+                  ),
+                  value_box(
+                    "RNA Polymerase Flux Analysis",
+                    theme_color = "warning",
+                    actionBttn("rnapf","GO",color = "success"),
+                    showcase = bsicons::bs_icon("chevron-double-right")
                   ),
                   value_box(
                     "RNA-seq Data Differentiation Expression Analysis",
@@ -452,7 +665,7 @@ function(input, output, session) {
                 helpText("Please upload files as required below:"
                 ),
                 
-                textInput("acc", "Sample Accesstion:"),
+                textInput("acc", "Sample Accession:"),
                 #  fileInput("uploadc", NULL, buttonLabel = "Upload plasmids...", multiple = TRUE,accept = c(".gb")),
                 fileInput("uploaddep", NULL, buttonLabel = "Upload one coverage depth file...", multiple = FALSE,accept = c(".depth")),
                 numericInputIcon("adjfactor","Adjust Factor Value:",value = 1e6, min=1, max = 1e9),
@@ -464,10 +677,46 @@ function(input, output, session) {
     )
   }
   
+  pfmodal <- function(failed = FALSE) {
+    modalDialog(size="m",title="Genetic Circuit RNA Polymerase Flux Analysis",
+                helpText("Please upload files as required below:"
+                ),
+                
+                textInput("acc", "Sample Accession:"),
+                #  fileInput("uploadc", NULL, buttonLabel = "Upload plasmids...", multiple = TRUE,accept = c(".gb")),
+                fileInput("uploaddep", NULL, buttonLabel = "Upload one coverage depth file...", multiple = FALSE,accept = c(".depth")),
+                fileInput("uploadlogic", NULL, buttonLabel = "Upload circuit logic file...", multiple = FALSE,accept = c(".json")),
+                uiOutput("cirfiles"),
+                numericInputIcon("adjfactor","Adjust Factor Value:",value = 1e6, min=1, max = 1e9),
+                dropdownButton(
+                  inputId = "mydropdown",
+                  label = "Set RNAP Flux Paramters",
+                  icon = icon("sliders"),
+                  circle = T,
+                  status = "primary",
+                
+                numericInputIcon("cpratio","Adjust Plasmid Copy Number:",value=1, min=1, max = 1e5),
+                numericInputIcon("ratio1","RPU-RNAP Conversion Factor:",value=0.019, min=0, max = 10),
+                numericInputIcon("intercept","RPU-RNAP Conversion Intercept:",value=5.05e-5, min=0, max = 100),
+                numericInputIcon("coefficient","RPU-RNAP Conversion Coefficient:",value=1.64, min=0, max = 100),
+                numericInputIcon("gamma","RNA Degradation Rate:",value=0.0067, min=0, max = 10)
+                ),
+               
+                footer = tagList(
+                  modalButton("Cancel"),
+                  actionButton("gopf", "Confirm")
+                )
+    )
+  }
+  
 
   
   observeEvent(input$rnadep, {
     showModal(depthmodal())
+  })
+  
+  observeEvent(input$rnapf, {
+    showModal(pfmodal())
   })
   
   # Show modal when button is clicked.
@@ -475,18 +724,5 @@ function(input, output, session) {
     showModal(dataModal())
   })
   
-  
-  output$distPlot <- renderPlot({
-    
-    # generate bins based on input$bins from ui.R
-    x    <- faithful[, 2]
-    bins <- seq(min(x), max(x), length.out = input$bins + 1)
-    
-    # draw the histogram with the specified number of bins
-    hist(x, breaks = bins, col = 'darkgray', border = 'white',
-         xlab = 'Waiting time to next eruption (in mins)',
-         main = 'Histogram of waiting times')
-    
-  })
   
 }

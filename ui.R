@@ -39,8 +39,8 @@ page_navbar(
               fill = FALSE,
               h1(),
               h1("Welcome to Genetic Circuit Debugging Toolkits!"),
-              h4("Please click on the start button and choose you analysis options to start your analysis."),
-              layout_column_wrap(width=1/3,actionBttn("start", "Start"))
+              h4("Please click on the button and choose you analysis options to start your analysis."),
+              layout_column_wrap(width=1/3,actionBttn("start", "New Project"))
             )
   ),
   nav_spacer(),

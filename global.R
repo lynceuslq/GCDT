@@ -613,4 +613,477 @@ plot.lin.comp.multi <- function(features,depthfiles,chrs, select=NULL, source="l
   
   
   return(do.call("subplot",figs))
+}}
+
+gcl.sankey <- function(sanktab,linkvals=1, source="sankey_plot") {
+  
+  if(length(sanktab$GC_Units$items) >0) {
+    nodetab <- foreach::foreach(a=1:length(sanktab$GC_Units$items),.combine = "rbind") %do% data.frame(items=sanktab$GC_Units$items[[a]],unit=paste0(sanktab$GC_Units$type[[a]],":",sanktab$GC_Units$label[[a]]),color=sanktab$GC_Units$color[[a]])
+  }
+  
+  if(length(sanktab$Link_Info$donor) >0) {
+    linklist = list(
+      source = match(sanktab$Link_Info$donor,nodetab$items)-1,
+      target = match(sanktab$Link_Info$recept, nodetab$items)-1,
+      value =  rep(1,length(sanktab$Link_Info$donor)),
+      label =  as.character(sanktab$Link_Info$label)
+    )
+  }
+  
+  if(length(sanktab$GC_Units$items) >0 & length(sanktab$Link_Info$donor) >0) {
+    fig <- plot_ly(
+      source=source,
+      type = "sankey",
+      orientation = "h",
+      
+      
+      node = list(
+        label = nodetab$items,
+        color = nodetab$color,
+        customdata=nodetab$unit,
+        hovertemplate=paste("<b>%{customdata}</b><br><br>"),
+        pad = 15,
+        thickness = 20,
+        line = list(
+          color = "black",
+          width = 0.5
+        )
+      ),
+      
+      
+      link = linklist
+    )
+    fig <- fig %>% layout(
+      title = "Flowchart for Genetic Circuit Logic",
+      font = list(
+        size = 10
+      )
+    )
+    
+    return(fig)
+  }
+  
+  
+}
+
+# Genetic elements
+
+semicir_x <- function(center=c(0,0), diameter=1, npoints=10){
+  tt <- seq(0, pi, length.out=npoints)
+  return(center[1] + diameter / 2 * cos(tt))
+  
+}
+
+semicir_y <- function(center=c(0,0), diameter=1, npoints=10){
+  tt <- seq(0, pi, length.out=npoints)
+  return(center[2] + diameter / 2 * sin(tt))
+  
+}
+
+set.point <- function(post,l,h=1) {
+  return(
+    data.frame(
+      x=c(post-l/2,post,post+l/2,post-l/2),
+      y=c(-3^(1/2)/2*l*h,0,-3^(1/2)/2*l*h,-3^(1/2)/2*l*h)
+    )
+  )
+}
+
+cir_x <- function(center=c(0,0), diameter=1, npoints=20){
+  tt <- c(seq(-pi/2, 3/2*pi, length.out=npoints))
+  
+  
+  return(c(center[1] + diameter / 2 * cos(tt)))
+  
+}
+
+cir_y <- function(center=c(0,0), diameter=1, npoints=20){
+  tt <- c(seq(-pi/2, 3/2*pi, length.out=npoints))
+  
+  return(c(center[2] + diameter / 2 * sin(tt)))
+  
+}
+
+ele.func.suite <- list(
+  promoter=function(post,len,h=1,arrow=0.3) {
+    return(
+      data.frame(
+        x=c(post,post,post+len-arrow*len,post+len-arrow*len,post+len,post+len-arrow*len,post+len-arrow*len,post,post),
+        y=c(0,len*h,len*h,len*h+arrow*len*h*0.4,len*h,len*h-arrow*len*h*0.4,len*h,len*h,0)
+      )
+    )
+  },
+  promoter.rc=function(post,len,h=1,arrow=0.3) {
+    return(
+      data.frame(
+        x=c(post,post,post-len+arrow*len,post-len+arrow*len,post-len,post-len+arrow*len,post-len+arrow*len,post,post),
+        y=c(0,-len*h,-len*h,-len*h-arrow*len*h*0.4,-len*h,-len*h+arrow*h*len*0.4,-len*h,-len*h,0)
+      )
+    )
+  },
+  RBS=function(post,d) {
+    return(
+      data.frame(
+        x=c(semicir_x(center=c(post,0),diameter=d,npoints=20),post+d/2),
+        y=c(semicir_y(center=c(post,0),diameter=d,npoints=20),0)
+      )
+    )
+  },
+  RBS.rc = function(post,d) {
+    return(
+      data.frame(
+        x=c(semicir_x(center=c(post,0),diameter=d,npoints=20),post+d/2),
+        y=-c(semicir_y(center=c(post,0),diameter=d,npoints=20),0)
+      )
+    )
+  },
+  terminator=function(post,len,h=1) {
+    return(
+      data.frame(
+        x=c(post-len/40,post-len/40,post-len/40-len/2,post-len/40-len/2,post+len/40+len/2,post+len/40+len/2,post+len/40,post+len/40,post-len/40),
+        y=c(0,h*len-h*len/20,h*len-h*len/20,h*len,h*len,h*len-h*len/20,h*len-h*len/20,0,0)
+      )
+    )
+  },
+  terminator.rc=function(post,len,h=1) {
+    return(
+      data.frame(
+        x=c(post-len/40,post-len/40,post-len/40-len/2,post-len/40-len/2,post+len/40+len/2,post+len/40+len/2,post+len/40,post+len/40,post-len/40),
+        y=-c(0,h*len-h*len/20,h*len-h*len/20,h*len,h*len,h*len-h*len/20,h*len-h*len/20,0,0)
+      )
+    )
+  },
+  insulator=function(post,h,d=0.5) {
+    return(
+      data.frame(
+        x=c(post,cir_x(center=c(post,h),diameter=d*h),post),
+        y=c(0,cir_y(center=c(post,h),diameter=d*h),0)
+      ))
+  },
+  insulator.rc=function(post,h,d=0.5) {
+    return(
+      data.frame(
+        x=c(post,cir_x(center=c(post,h),diameter=d*h),post),
+        y=-c(0,cir_y(center=c(post,h),diameter=d*h),0)
+      ))
+  },
+  CDS=function(start,end,arrow=0.2,h=1) {
+    len=end-start
+    return(data.frame(
+      x=c(start,start+(1-arrow)*len,start+(1-arrow)*len,end,start+(1-arrow)*len,start+(1-arrow)*len,start,start),
+      y=c(h*len/10/2,h*len/10/2,h*len/10,0,-h*len/10,-h*len/10/2,-h*len/10/2,h*len/10/2)
+    ))
+  },
+  CDS.rc=function(start,end,arrow=0.2,h=1) {
+    len=end-start
+    return(data.frame(
+      x=c(end,end-(1-arrow)*len,end-(1-arrow)*len,start,end-(1-arrow)*len,end-(1-arrow)*len,end,end),
+      y=c(h*len/10/2,h*len/10/2,h*len/10,0,-h*len/10,-h*len/10/2,-h*len/10/2,h*len/10/2)
+    ))
+  }
+)
+
+plot.with.ele <- function(profile,chr,featuretab) {
+  name <- featuretab$label
+  leng <- featuretab$end-featuretab$start 
+  if(leng <= 80) {
+    start <- round(featuretab$start - 30 )
+    end <- round(featuretab$end + 30)
+  }else{
+    start <- round(featuretab$start - leng*0.4 )
+    end <- round(featuretab$end + leng*0.4)
+  }
+  
+  type <- featuretab$type
+  strand <- featuretab$strand
+  
+  depdata <- extract.norm.depth(profile,chr,start,end)
+  height <- max(depdata$adjdepth)
+  ratio <- height/leng
+  
+  pointdata <- set.point(featuretab$start,ratio*leng/12,h=1)
+  pointdata2 <- set.point(featuretab$end,ratio*leng/12,h=1)
+  
+  fig <- plot_ly() %>%
+    add_trace(x=depdata$loc,y=depdata$adjdepth,mode="lines",fill="tozeroy",
+              name="RNAP Flux",
+              hovertemplate = paste(
+                '<br>Locus: %{x}<br>',
+                '<br>Depth: %{y}<br>')) %>%
+    add_trace(x=pointdata$x,y=pointdata$y+depdata$adjdepth[depdata$loc== featuretab$start],mode="lines",line = list(
+      width = 2,color="black" ),name="start", fill="toself",fillcolor="white") %>%
+    add_trace(x=pointdata2$x,y=pointdata2$y+depdata$adjdepth[depdata$loc== featuretab$end],mode="lines",line = list(
+      width = 2,color="black"  ),name="end", fill="toself",fillcolor="white")
+  
+  if(strand=="-") {
+    eletype <- paste0(type,".rc")
+  }else{
+    eletype <- type
+  }
+  
+  if(eletype %in% names(ele.func.suite)) {
+    myfunc <-  ele.func.suite[[eletype]]
+    
+    fig <- fig  %>%
+      add_trace(x=depdata$loc,y=rep(height*1.1,length(depdata$loc)),name="Plasmid",mode="lines",line = list(
+        width = 3,
+        color="grey"
+      ))
+    
+    color="grey"
+    fillcolor ="white"
+    
+    
+    if(eletype %in% c("promoter","promoter.rc")){
+      eletab <- myfunc(featuretab$start,leng/6,h=2*ratio,arrow=0.3)
+      
+      fig <- fig %>%
+        add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
+          color=color,
+          width = 3
+        ),names=name, fill="toself",fillcolor=fillcolor)
+    }
+    
+    if(eletype %in% c("RBS","RBS.rc")){
+      eletab <- myfunc(featuretab$start,height/8)
+      
+      fig <- fig %>%
+        add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
+          color=color,
+          width = 3
+        ),names=name, fill="toself",fillcolor=fillcolor)
+    }
+    
+    if(eletype %in% c("terminator","terminator.rc")){
+      eletab <- myfunc(featuretab$start,leng/6,h=2*ratio)
+      
+      fig <- fig %>%
+        add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
+          color=color,
+          width = 3
+        ),names=name, fill="toself",fillcolor=fillcolor)
+    }
+    
+    if(eletype %in% c("insulator","insulator.rc")){
+      eletab <- myfunc(featuretab$start,leng/4)
+      
+      fig <- fig %>%
+        add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
+          color=color,
+          dash="dot",
+          width = 3
+        ),names=name, fill="toself",fillcolor=fillcolor)
+    }
+    
+    if(eletype %in% c("CDS","CDS.rc")){
+      eletab <- myfunc(featuretab$start,featuretab$end,h=0.4*ratio)
+      
+      fig <- fig %>%
+        add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
+          color=color,
+          width = 3
+        ),names=name, fill="toself",fillcolor=fillcolor)
+    }
+  }
+  
+  
+  
+  return(fig)
+}
+
+plot.pl.reg <- function(chr,features,logicfile,adj=100, source="regulation_plot") {
+  fig <- plot_ly(source=source)
+  
+  if(length(logicfile$GC_Units$items) >0)
+  {
+    
+    elelist <- foreach::foreach(a=logicfile$GC_Units$items,.combine = "c") %do% a
+    
+    newf <- features[na.omit(match(elelist,features$label)),]
+    
+    lenpl <- round(max(newf$end)/adj - min(newf$start)/adj)
+    startpl <- round(min(newf$start)/adj - lenpl/10)
+    endpl <- round(max(newf$end)/adj + lenpl/10)
+    
+    fig <- fig %>%
+      add_trace(x=startpl:endpl,
+                y=rep(0,length(startpl:endpl)),mode="lines",line = list(
+                  width = 3,
+                  color="grey"
+                ),name=paste("Plasmid",chr))
+    
+    
+    if(length(elelist) >0) {
+      for( x in elelist )  {
+        
+        if(x %in% features$label ) {
+          print(x)
+          featuretab <- na.omit(features[features$label == x,])
+          for(i in 1:length(featuretab$label)) {
+            name <- featuretab$label[i]
+            type <- featuretab$type[i]
+            strand <- featuretab$strand[i]
+            
+            if(strand=="-") {
+              eletype <- paste0(type,".rc")}else{
+                eletype <- type
+              }
+            
+            if(eletype %in% names(ele.func.suite)) {
+              myfunc <-  ele.func.suite[[eletype]]
+              
+              len=1
+              hei <- 2/len
+              
+              if(eletype %in% c("promoter","promoter.rc")){
+                eletab <- myfunc(featuretab$start[i]/adj,len,h=hei,arrow=0.3)
+                fig <- fig   %>%
+                  add_trace(x=eletab$x,y=eletab$y,mode="lines",
+                            name=name,line = list(
+                              width = 2
+                            ), fill="toself")
+              }
+              
+              if(eletype %in% c("RBS","RBS.rc")){
+                eletab <- myfunc(featuretab$start[i]/adj,d=len/2)
+                fig <- fig   %>%
+                  add_trace(x=eletab$x,y=eletab$y,mode="lines",
+                            name=name,line = list(
+                              width = 2
+                            ), fill="toself")
+              }
+              
+              if(eletype %in% c("terminator","terminator.rc")){
+                eletab <- myfunc(featuretab$start[i]/adj,len,h=hei)
+                fig <- fig   %>%
+                  add_trace(x=eletab$x,y=eletab$y,mode="lines",
+                            name=name,line = list(
+                              width = 2
+                            ), fill="toself")
+              }
+              
+              if(eletype %in% c("insulator","insulator.rc")){
+                eletab <- myfunc(featuretab$start[i]/adj,h=1,d=len/4)
+                fig <- fig   %>%
+                  add_trace(x=eletab$x,y=eletab$y,mode="lines",
+                            name=name,line = list(
+                              width = 2,
+                              dash="dot"
+                            ), fill="toself")
+              }
+              
+              if(eletype %in% c("CDS","CDS.rc")){
+                eletab <- myfunc(featuretab$start[i]/adj,featuretab$end[i]/adj,h=10/(featuretab$end[i]/adj-featuretab$start[i]/adj))
+                fig <- fig   %>%
+                  add_trace(x=eletab$x,y=eletab$y,mode="lines",
+                            name=name,line = list(
+                              width = 2
+                            ), fill="toself")
+              }
+              
+              
+              
+            }
+          }
+          
+        }
+        
+      }
+    }
+    
+  }
+  fig <- fig   %>%
+    layout(xaxis=list(showticklabels=F),yaxis=list(showticklabels=F,range=c(-5,5)))
+  
+  return(fig)
+}
+
+# RNAP flux calculations
+rnap.func <- function(x, pars) {
+  #str(pars)
+  Jx <- as.numeric(pars["cpratio"] * pars["ratio1"] * pars["convert1"] * 10^(pars["convert2"] * log10(pars["gamma"] * x)))
+  return(Jx)
+}
+
+jskew.func <- function(start, end, profile, pars) {
+  jxlist <- c()
+  acc <- start:end
+  for (i in 1:length(acc)) {
+    jxlist[i] <- rnap.func(profile[acc[i+1]], pars) / rnap.func(profile[acc[i]], pars)
+  }
+  return(jxlist)
+}
+
+sumjx.func <- function(loc, window, profile, pars) {
+  jxlist <- c()
+  acc <- loc:(loc+window)
+  for(i in 1:length(acc)) {
+    jxlist[i] <- rnap.func(profile[acc[i]], pars)
+  }
+  return(sum(jxlist))
+}
+
+aws.func <- function(start, end, window, profile, pars) {
+  awslist <- c()
+  if(start < end ) {
+    acc <- start:end
+    for(i in 1:length(acc)){
+      if(acc[i]-window <= 0 | acc[i] + window >= end) {
+        awslist[i] <- 0
+      }else {
+        awslist[i] <- sumjx.func(acc[i]-window, window, profile=profile, pars=pars) / sumjx.func(acc[i], window, profile=profile, pars=pars)
+      }
+    }
+    return(awslist)
+  }else{
+    print("invalid input! please check your start and end loci")
+  }
+}
+
+findpeak.func <- function(vec, threshold) {
+  post <- (1:length(vec))[vec >= threshold]
+  #print(paste("site at positions beyond threshold", post, sep=" "))
+  peak <- c()
+  post <- na.omit(post)
+  for(i in post) {
+    if(length(vec[(i-1):(i+1)][is.na(vec[(i-1):(i+1)])]) == 0) {
+      if(vec[i] > vec[i+1] & vec[i] > vec[i-1]){
+        peak <- c(peak, i)
+      }
+    }else{print(i)}
+  }
+  return(peak)
+} 
+
+termi.str.func <- function(locus, gap, window, profile, pars) {
+  if(locus - gap - window > 0 ) {
+    ter <- sumjx.func(locus - gap - window,  window, profile=profile, pars=pars) /  sumjx.func(locus + gap, window, profile=profile, pars=pars)
+    return(ter)
+  }else{
+    print("invalid input! please check your locus")
+  }
+}
+
+prom.str.func <- function(locus, gap, window, profile, pars) {
+  if(locus - gap - window > 0 ) {
+    prom <-  sumjx.func(locus + gap, window, profile=profile, pars=pars) - sumjx.func(locus - gap - window,  window, profile=profile, pars=pars)
+    prom <- prom /window
+    return(prom)
+  }else{
+    print("invalid input! please check your locus")
+  }
+}
+
+ce.func <- function(jx1, jx2) {
+  ce <- (jx2 - jx1) / jx2
+  return(ce)
+}
+
+diffj.func <- function(locus, gap, window, profile, pars) {
+  if(locus -gap - window > 0 ) {
+    dj <- sumjx.func(locus + gap, window, profile=profile, pars=pars) / window -  sumjx.func(locus - gap -window, window, profile=profile, pars=pars) / window
+    return(dj)
+  }else{
+    print("invalid input! please check your locus")
+  }
 }

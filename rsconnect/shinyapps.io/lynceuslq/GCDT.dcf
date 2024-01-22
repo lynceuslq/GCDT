@@ -1,0 +1,14 @@
+name: GCDT
+title: GCDT
+username:
+account: lynceuslq
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 10817754
+bundleId: 8060305
+url: https://lynceuslq.shinyapps.io/GCDT/
+when: 1702882464.7932
+lastSyncTime: 1702882464.79322
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData
