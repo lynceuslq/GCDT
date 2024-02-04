@@ -613,7 +613,7 @@ plot.lin.comp.multi <- function(features,depthfiles,chrs, select=NULL, source="l
   
   
   return(do.call("subplot",figs))
-}}
+}
 
 gcl.sankey <- function(sanktab,linkvals=1, source="sankey_plot") {
   
@@ -783,7 +783,23 @@ ele.func.suite <- list(
   }
 )
 
-plot.with.ele <- function(profile,chr,featuretab) {
+
+plot.with.ele.height <- function(profile,chr,featuretab) {
+  leng <- featuretab$end-featuretab$start 
+  if(leng <= 80) {
+    start <- round(featuretab$start - 30 )
+    end <- round(featuretab$end + 30)
+  }else{
+    start <- round(featuretab$start - leng*0.4 )
+    end <- round(featuretab$end + leng*0.4)
+  }
+  
+  depdata <- extract.norm.depth(profile,chr,start,end)
+  height <- max(depdata$adjdepth)
+  return(height)
+}
+
+plot.with.ele <- function(profile,chr,featuretab,pointstart, pointend) {
   name <- featuretab$label
   leng <- featuretab$end-featuretab$start 
   if(leng <= 80) {
@@ -801,8 +817,8 @@ plot.with.ele <- function(profile,chr,featuretab) {
   height <- max(depdata$adjdepth)
   ratio <- height/leng
   
-  pointdata <- set.point(featuretab$start,ratio*leng/12,h=1)
-  pointdata2 <- set.point(featuretab$end,ratio*leng/12,h=1)
+  pointdata <- set.point(pointstart,ratio*leng/12,h=1)
+  pointdata2 <- set.point(pointend,ratio*leng/12,h=1)
   
   fig <- plot_ly() %>%
     add_trace(x=depdata$loc,y=depdata$adjdepth,mode="lines",fill="tozeroy",
@@ -810,9 +826,9 @@ plot.with.ele <- function(profile,chr,featuretab) {
               hovertemplate = paste(
                 '<br>Locus: %{x}<br>',
                 '<br>Depth: %{y}<br>')) %>%
-    add_trace(x=pointdata$x,y=pointdata$y+depdata$adjdepth[depdata$loc== featuretab$start],mode="lines",line = list(
+    add_trace(x=pointdata$x,y=pointdata$y+depdata$adjdepth[depdata$loc== pointstart],mode="lines",line = list(
       width = 2,color="black" ),name="start", fill="toself",fillcolor="white") %>%
-    add_trace(x=pointdata2$x,y=pointdata2$y+depdata$adjdepth[depdata$loc== featuretab$end],mode="lines",line = list(
+    add_trace(x=pointdata2$x,y=pointdata2$y+depdata$adjdepth[depdata$loc== pointend],mode="lines",line = list(
       width = 2,color="black"  ),name="end", fill="toself",fillcolor="white")
   
   if(strand=="-") {
@@ -835,7 +851,7 @@ plot.with.ele <- function(profile,chr,featuretab) {
     
     
     if(eletype %in% c("promoter","promoter.rc")){
-      eletab <- myfunc(featuretab$start,leng/6,h=2*ratio,arrow=0.3)
+      eletab <- myfunc(pointstart,leng/6,h=2*ratio,arrow=0.3)
       
       fig <- fig %>%
         add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
@@ -845,7 +861,7 @@ plot.with.ele <- function(profile,chr,featuretab) {
     }
     
     if(eletype %in% c("RBS","RBS.rc")){
-      eletab <- myfunc(featuretab$start,height/8)
+      eletab <- myfunc(pointstart,height/8)
       
       fig <- fig %>%
         add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
@@ -855,7 +871,7 @@ plot.with.ele <- function(profile,chr,featuretab) {
     }
     
     if(eletype %in% c("terminator","terminator.rc")){
-      eletab <- myfunc(featuretab$start,leng/6,h=2*ratio)
+      eletab <- myfunc(pointstart,leng/6,h=2*ratio)
       
       fig <- fig %>%
         add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
@@ -865,7 +881,7 @@ plot.with.ele <- function(profile,chr,featuretab) {
     }
     
     if(eletype %in% c("insulator","insulator.rc")){
-      eletab <- myfunc(featuretab$start,leng/4)
+      eletab <- myfunc(pointstart,leng/4)
       
       fig <- fig %>%
         add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
@@ -876,7 +892,7 @@ plot.with.ele <- function(profile,chr,featuretab) {
     }
     
     if(eletype %in% c("CDS","CDS.rc")){
-      eletab <- myfunc(featuretab$start,featuretab$end,h=0.4*ratio)
+      eletab <- myfunc(pointstart,pointend,h=0.4*ratio)
       
       fig <- fig %>%
         add_trace(x=eletab$x,y=height*1.1+eletab$y,mode="lines",line = list(
@@ -1007,34 +1023,34 @@ rnap.func <- function(x, pars) {
 
 jskew.func <- function(start, end, profile, pars) {
   jxlist <- c()
-  acc <- start:end
-  for (i in 1:length(acc)) {
-    jxlist[i] <- rnap.func(profile[acc[i+1]], pars) / rnap.func(profile[acc[i]], pars)
+  acc=start:(end+1)
+  for (i in 1:(length(acc)-1)) {
+    jxlist[i] <- rnap.func(profile$adjdepth[profile$loc==acc[i+1]], pars) / rnap.func(profile$adjdepth[profile$loc==acc[i]], pars)
   }
-  return(jxlist)
+  return(data.frame(loc=start:end,value=jxlist))
 }
 
 sumjx.func <- function(loc, window, profile, pars) {
   jxlist <- c()
   acc <- loc:(loc+window)
   for(i in 1:length(acc)) {
-    jxlist[i] <- rnap.func(profile[acc[i]], pars)
+    jxlist[i] <- rnap.func(profile$adjdepth[acc[i]], pars)
   }
   return(sum(jxlist))
 }
 
-aws.func <- function(start, end, window, profile, pars) {
+aws.func <- function(start, end, window=5, profile, pars) {
   awslist <- c()
   if(start < end ) {
-    acc <- start:end
-    for(i in 1:length(acc)){
+    acc <- start:(end+1)
+    for(i in 1:(length(acc)-1)){
       if(acc[i]-window <= 0 | acc[i] + window >= end) {
         awslist[i] <- 0
       }else {
         awslist[i] <- sumjx.func(acc[i]-window, window, profile=profile, pars=pars) / sumjx.func(acc[i], window, profile=profile, pars=pars)
       }
     }
-    return(awslist)
+    return(data.frame(loc=start:end,value=awslist))
   }else{
     print("invalid input! please check your start and end loci")
   }
@@ -1067,7 +1083,8 @@ termi.str.func <- function(locus, gap, window, profile, pars) {
 prom.str.func <- function(locus, gap, window, profile, pars) {
   if(locus - gap - window > 0 ) {
     prom <-  sumjx.func(locus + gap, window, profile=profile, pars=pars) - sumjx.func(locus - gap - window,  window, profile=profile, pars=pars)
-    prom <- prom /window
+    gapsum <-  sumjx.func(locus - gap , 2*gap, profile=profile, pars=pars)
+    prom <- prom /gapsum
     return(prom)
   }else{
     print("invalid input! please check your locus")

@@ -128,6 +128,30 @@ function(input, output, session) {
     
   })
   
+  observeEvent(input$gopf, {
+    req(rv$project)
+    req(rv[[rv$project]]$logicfile)
+   # req(rv[[rv$project]]$depfile)
+    req(rv[[rv$project]]$circuit)
+    req(rv[[rv$project]]$chr)
+    
+    rv[[rv$project]]$eledf <- foreach::foreach(a=rv[[rv$project]]$chr,.combine = "rbind") %do% {
+      if(length(rv[[rv$project]]$logicfile$GC_Units$items) >0){
+        elelist <- foreach::foreach(b=rv[[rv$project]]$logicfile$GC_Units$items,.combine = "c") %do% b
+        cir <- rv[[rv$project]]$circuit[[a]]
+        newf <- cir[na.omit(match(elelist,cir$label)),]
+        if(length(newf$label)>0) {
+          newf <- newf[newf$type %in% names(ele.func.suite),]
+          newf <- rbind(newf,data.frame(start=0,end=0,strand="line",type="line",label="line"))
+          newf$chr <- a
+          return(newf)
+        }
+        
+      }
+    }
+    
+  })
+  
   
   observeEvent(input$rnadep,{
     
@@ -522,7 +546,8 @@ function(input, output, session) {
                                            sidebar = sidebar(
                                              checkboxInput(paste("cal_flux",rv$project,sep="_"),
                                                            label = "Check to display RNAP Flux",
-                                                           value = F)
+                                                           value = F),
+                                             uiOutput(paste("calculator",rv$project,sep="_"))
                                            ),
                                            fillable = TRUE,
                                            plotlyOutput(paste("rfele",rv$project,sep="_"))
@@ -571,15 +596,48 @@ function(input, output, session) {
        plot
       })
       
-      
-      output[[paste("rfele",x,sep="_")]] <- renderPlotly({
-        req(rv[[x]]$logicfile)
-        req(rv[[x]]$depfile)
-        req(rv[[x]]$circuit)
-        req(rv[[x]]$chr)
+      output[[paste("calculator",x,sep="_")]] <- renderUI({
+        req(rv[[x]]$eledf)
         
         clickData <- event_data("plotly_click", source=paste("reg_plot",x,rv[[x]]$chr[[length(rv[[x]]$chr)]],sep = "_"))
         
+        if (is.null(clickData)) return(NULL)
+        
+        num <-  clickData[["curveNumber"]]
+        print(num)
+        
+        print(rv[[x]]$eledf[num,])
+        mydiv <- div()
+        
+        if(clickData[["curveNumber"]] >0) {
+          if(rv[[x]]$eledf[num,]$type == "promoter") {
+            mydiv <- div(checkboxInput(paste("caltss",x,sep="_"),label = "Calculate TSS"),
+                         numericInputIcon(paste("caltss_gap",x,sep="_"),label = "Gap Value:" ,
+                                          value = 5,min = 1,max = 20,
+                                          icon =  icon("gap", class = "fa-solid fa-arrows-left-right-to-line", lib = "font-awesome")))
+          }
+          if(rv[[x]]$eledf[num,]$type == "terminator") {
+            mydiv <- div(checkboxInput(paste("caltts",x,sep="_"),label = "Calculate TTS"),
+                         numericInputIcon(paste("caltts_gap",x,sep="_"),label = "Gap Value:" ,
+                                          value = 5,min = 1,max = 20,
+                                          icon =  icon("gap", class = "fa-solid fa-arrows-left-right-to-line", lib = "font-awesome")))
+          }
+        }
+        
+        return(mydiv)
+      })
+      
+     
+      
+      
+      output[[paste("rfele",x,sep="_")]] <- renderPlotly({
+        #req(rv[[x]]$logicfile)
+        req(rv[[x]]$depfile)
+       # req(rv[[x]]$circuit)
+       # req(rv[[x]]$chr)
+        req(rv[[x]]$eledf)
+        
+        clickData <- event_data("plotly_click", source=paste("reg_plot",x,rv[[x]]$chr[[length(rv[[x]]$chr)]],sep = "_"))
         
         if (is.null(clickData)) return(NULL)
         
@@ -588,36 +646,198 @@ function(input, output, session) {
         num <-  clickData[["curveNumber"]]
         print(num)
         
-        eledf <- foreach::foreach(a=rv[[x]]$chr,.combine = "rbind") %do% {
-          if(length(rv[[x]]$logicfile$GC_Units$items) >0){
-            elelist <- foreach::foreach(b=rv[[x]]$logicfile$GC_Units$items,.combine = "c") %do% b
-            cir <- rv[[x]]$circuit[[a]]
-            newf <- cir[na.omit(match(elelist,cir$label)),]
-            if(length(newf$label)>0) {
-              newf <- newf[newf$type %in% names(ele.func.suite),]
-              newf <- rbind(newf,data.frame(start=0,end=0,strand="line",type="line",label="line"))
-              newf$chr <- a
-              return(newf)
+        print(rv[[x]]$eledf[num,])
+        plot <- plot_ly()
+        
+        if(clickData[["curveNumber"]] >0) {
+          if(rv[[x]]$eledf[num,]$strand != "line") {
+            if(input[[paste("cal_flux",x,sep="_")]] == F) {
+              plot <- plot.with.ele(rv[[x]]$depfile,rv[[x]]$eledf[num,]$chr,rv[[x]]$eledf[num,],
+                                    rv[[x]]$eledf[num,]$start,
+                                    rv[[x]]$eledf[num,]$end)
+              textheight <- plot.with.ele.height(rv[[x]]$depfile,rv[[x]]$eledf[num,]$chr,rv[[x]]$eledf[num,])
+              print("Cov!")
+            }else{
+              plot <- plot.with.ele(rv[[x]]$rnapflux,rv[[x]]$eledf[num,]$chr,rv[[x]]$eledf[num,],
+                                    rv[[x]]$eledf[num,]$start,
+                                    rv[[x]]$eledf[num,]$end)
+              textheight <- plot.with.ele.height(rv[[x]]$rnapflux,rv[[x]]$eledf[num,]$chr,rv[[x]]$eledf[num,])
+              print("RNAP!")
             }
+          }
+          
+        }
+        
+        t <- list(
+          family = "sans serif",
+          size = 14,
+          color = toRGB("grey50"))
+        
+        if(rv[[x]]$eledf[num,]$type == "promoter"){
+          req(input[[paste("caltss_gap",x,sep="_")]])
+          if(input[[paste("caltss",x,sep="_")]]) {
+            
+            cir <- rv[[x]]$circuit[[rv[[x]]$eledf[num,]$chr]]
+            
+            str <- as.character(rv[[x]]$eledf$strand[num])
+            
+            print(str)
+            candi <- cir[cir$strand==str & cir$type=="CDS",]
+            print(candi)
+            if(str=="+") {
+              candi <- candi[candi$start >= rv[[x]]$eledf[num,]$end,]
+              if(length(candi$start) >0){
+                cds <- candi[match(min(candi$start),candi$start),]
+                print(cds)
+                
+                dep <- rv[[x]]$depfile[rv[[x]]$depfile$chr==rv[[x]]$eledf[num,]$chr,]
+                tss <- jskew.func(rv[[x]]$eledf[num,]$start, cds$end, dep, rv[[x]]$params)
+                
+                neweledf <- rv[[x]]$eledf[num,]
+                neweledf$start <- rv[[x]]$eledf[num,]$start
+                neweledf$end <- cds$end
+                
+                if(rv[[x]]$eledf[num,]$strand != "line") {
+                  if(input[[paste("cal_flux",x,sep="_")]] == F) {
+                    plot <- plot.with.ele(rv[[x]]$depfile,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }else{
+                    plot <- plot.with.ele(rv[[x]]$rnapflux,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }
+                }
+                print(max(tss$value))
+              }
+            }else{
+              candi <- candi[candi$end <= rv[[x]]$eledf[num,]$start,]
+              if(length(candi$end) >0){
+                cds <- candi[candi$end == max(candi$end),]
+                print(cds)
+                dep <- rv[[x]]$depfile[rv[[x]]$depfile$chr==rv[[x]]$eledf[num,]$chr,]
+                tss <- jskew.func( cds$start, rv[[x]]$eledf[num,]$end,dep, rv[[x]]$params)
+                
+                neweledf <- rv[[x]]$eledf[num,]
+                neweledf$end <- rv[[x]]$eledf[num,]$end
+                neweledf$start <- cds$start
+                
+                if(rv[[x]]$eledf[num,]$strand != "line") {
+                  if(input[[paste("cal_flux",x,sep="_")]] == F) {
+                    plot <- plot.with.ele(rv[[x]]$depfile,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }else{
+                    plot <- plot.with.ele(rv[[x]]$rnapflux,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }
+                }
+                print(max(tss$value))
+              }
+            }
+            
+            tssloc <- tss[tss$value ==max(tss$value),]
+            
+            pointdata <- set.point(tssloc$loc,max(tss$value)/5,h=1)
+            plot2 <- plot_ly() %>% add_trace(x=tss$loc,y=tss$value,mode="lines",name="RNAP(i+1)/RNAP(i)", fill="tozeroy") %>%
+              add_trace(x=pointdata$x,y=pointdata$y+max(tss$value),mode="lines",line = list(
+                width = 2,color="black"  ),name="Promoter Strength", fill="toself",fillcolor="white")
+            
+           # peakv <- findpeak.func(tss$value, mean(tss$value)*1.5)
+            
+            if(is.null(tssloc)) {
+              plot2 <- plot2 %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=-mean(tss$value),text=paste("No TSS locus detected!"),
+                                           mode = 'text', textposition = 'middle right',textfont = t)
+            }else{
+             
+              plot2 <- plot2 %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=-mean(tss$value),
+                                           text=paste("Detected Promoter Strength", 
+                                                      prom.str.func(tssloc$loc,input[[paste("caltss_gap",x,sep="_")]],5,dep,rv[[x]]$params),
+                                                                                                     "at locus",tssloc$loc),
+                                           mode = 'text', textposition = 'middle right',textfont = t)
+            }
+            
+            
+          #  plot <- plot %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=textheight*1.05,text="Promoter Strength", mode = 'text', textposition = 'middle right',textfont = t)
+            
+            
+            plot <- subplot(plot,plot2,nrows = 2,shareX =T,heights=c(0.75,0.2))
             
           }
         }
         
-        print(eledf[num,])
-        plot <- plot_ly()
-        
-        if(clickData[["curveNumber"]] >0) {
-          
-          if(input[[paste("cal_flux",x,sep="_")]] == F) {
-            plot <- plot.with.ele(rv[[x]]$depfile,eledf[num,]$chr,eledf[num,])
-            print("Cov!")
-          }else{
-            plot <- plot.with.ele(rv[[x]]$rnapflux,eledf[num,]$chr,eledf[num,])
-            print("RNAP!")
+        if(rv[[x]]$eledf[num,]$type == "terminator"){
+          req(input[[paste("caltts_gap",x,sep="_")]])
+          if(input[[paste("caltts",x,sep="_")]]) {
+            
+            cir <- rv[[x]]$circuit[[rv[[x]]$eledf[num,]$chr]]
+            
+            str <- as.character(rv[[x]]$eledf$strand[num])
+            
+            print(str)
+            candi <- cir[cir$strand==str & cir$type=="CDS",]
+            print(candi)
+            if(str=="+") {
+              candi <- candi[candi$end <= rv[[x]]$eledf[num,]$start,]
+              if(length(candi$start) >0){
+                cds <- candi[match(max(candi$end),candi$end),]
+                print(cds)
+                
+                dep <- rv[[x]]$depfile[rv[[x]]$depfile$chr==rv[[x]]$eledf[num,]$chr,]
+                tts <- aws.func(cds$end, rv[[x]]$eledf[num,]$end,5, dep, rv[[x]]$params)
+                
+                neweledf <- rv[[x]]$eledf[num,]
+                neweledf$end <- rv[[x]]$eledf[num,]$end
+                neweledf$start <- cds$end
+                
+                if(rv[[x]]$eledf[num,]$strand != "line") {
+                  if(input[[paste("cal_flux",x,sep="_")]] == F) {
+                    plot <- plot.with.ele(rv[[x]]$depfile,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }else{
+                    plot <- plot.with.ele(rv[[x]]$rnapflux,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }
+                }
+                print(max(tts$value))
+              }
+            }else{
+              candi <- candi[candi$start >= rv[[x]]$eledf[num,]$end,]
+              if(length(candi$start) >0){
+                cds <- candi[candi$start == min(candi$start),]
+                print(cds)
+                dep <- rv[[x]]$depfile[rv[[x]]$depfile$chr==rv[[x]]$eledf[num,]$chr,]
+                tts <- aws.func(rv[[x]]$eledf[num,]$start, cds$start,5,dep, rv[[x]]$params)
+                
+                neweledf <- rv[[x]]$eledf[num,]
+                neweledf$start <- rv[[x]]$eledf[num,]$start
+                neweledf$end <- cds$start
+                
+                if(rv[[x]]$eledf[num,]$strand != "line") {
+                  if(input[[paste("cal_flux",x,sep="_")]] == F) {
+                    plot <- plot.with.ele(rv[[x]]$depfile,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }else{
+                    plot <- plot.with.ele(rv[[x]]$rnapflux,neweledf$chr,neweledf,rv[[x]]$eledf[num,]$start,rv[[x]]$eledf[num,]$end)
+                  }
+                }
+                print(max(tts$value))
+              }
+            }
+            
+            ttsloc <- tts[tts$value ==max(tts$value),]
+            pointdata <- set.point(ttsloc$loc,max(tts$value)/5,h=1)
+            plot2 <- plot_ly() %>% add_trace(x=tts$loc,y=tts$value,mode="lines",name="AWS(i)", fill="tozeroy") %>%
+              add_trace(x=pointdata$x,y=pointdata$y+max(tts$value),mode="lines",line = list(
+                width = 2,color="black"  ),name="Terminator Strength", fill="toself",fillcolor="white")
+            
+            #  plot <- plot %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=textheight*1.05,text="Terminator Strength", mode = 'text', textposition = 'middle right',textfont = t)
+            if(is.null(ttsloc)) {
+              plot2 <- plot2 %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=-mean(tts$value),text=paste("No TTS locus detected!"),
+                                           mode = 'text', textposition = 'middle right',textfont = t)
+            }else{
+              
+              plot2 <- plot2 %>% add_trace(x=rv[[x]]$eledf[num,]$start,y=-mean(tts$value),
+                                           text=paste("Detected Terminator Strength", 
+                                                      termi.str.func(ttsloc$loc,input[[paste("caltts_gap",x,sep="_")]],5,dep,rv[[x]]$params),
+                                                                                                     "at locus",ttsloc$loc),
+                                           mode = 'text', textposition = 'middle right',textfont = t)
+            }
+            
+            plot <- subplot(plot,plot2,nrows = 2,shareX =T,heights=c(0.75,0.2))
+            
           }
-          
         }
-        
         plot
       })
       
@@ -636,13 +856,15 @@ function(input, output, session) {
                     #  uiOutput("total_tippers", container = h2),
                     #  textInput("depname","Plsease enter the name of analysis"),
                     actionBttn("rnadep","GO",color = "success"),
-                    showcase = bsicons::bs_icon("bar-chart-steps")
+                    showcase = icon("cov",class="fa-solid fa-magnifying-glass-chart",lib = "font-awesome",style="font-size: 24px")
+                      #bsicons::bs_icon("bar-chart-steps")
                   ),
                   value_box(
                     "RNA Polymerase Flux Analysis",
                     theme_color = "warning",
                     actionBttn("rnapf","GO",color = "success"),
-                    showcase = bsicons::bs_icon("chevron-double-right")
+                    showcase = icon("flow",class="fa-solid fa-wind",lib = "font-awesome",style="font-size: 24px")
+                      #bsicons::bs_icon("chevron-double-right")
                   ),
                   value_box(
                     "RNA-seq Data Differentiation Expression Analysis",
@@ -650,7 +872,8 @@ function(input, output, session) {
                     #  uiOutput("total_tippers", container = h2),
                     #     textInput("dename","Plsease enter the name of analysis"),
                     actionBttn("rnade","GO",color = "success"),
-                    showcase = bsicons::bs_icon("activity")
+                    showcase = icon("act",class="fa-brands fa-buromobelexperte",lib = "font-awesome",style="font-size: 24px")
+                      #bsicons::bs_icon("activity")
                   )
                 ),
                 footer = tagList(
